@@ -1,0 +1,417 @@
+---
+title: "Diabetes Disease Prediction"
+author: "Monica Ghavalyan"
+date: "2024-05-04"
+output:
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+subtitle: Project report
+---
+
+The dataset is originally from the National Institute of Diabetes and Digestive and Kidney Diseases. The objective of the dataset is to diagnostically predict whether or not a patient has diabetes, based on certain diagnostic measurements included in the dataset. Several constraints were placed on the selection of these instances from a larger database. In particular, all patients here are females at least 21 years old of Pima Indian heritage.
+
+Link to the data: https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database
+
+\newpage
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(corrplot)
+library(reticulate)
+library(dplyr)
+use_python("C:/Users/Dell/Anaconda3/python.exe")
+```
+
+```{python, include=FALSE}
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import BaggingClassifier, RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+```
+
+
+Step 1: Research and Find the Dataset
+
+• Research and identify an appropriate dataset for your project.
+• The dataset should not be a ready-to-use dataset; it should require
+some preprocessing steps.
+• Consider datasets from reputable sources and relevant to the topic
+of your project.
+
+```{r}
+datar <- read.csv("diabetes.csv")
+summary(datar)
+str(datar)
+sum(is.na(datar))
+head(datar)
+tail(datar)
+
+#Changing values equal to 0 to NA, as those are missing values in the data and will be handled later.
+
+datar$Glucose[datar$Glucose == 0] <- NA
+datar$BloodPressure[datar$BloodPressure == 0] <- NA
+datar$SkinThickness[datar$SkinThickness == 0] <- NA
+datar$Insulin[datar$Insulin == 0] <- NA
+datar$BMI[datar$BMI == 0] <- NA
+datar$DiabetesPedigreeFunction[datar$DiabetesPedigreeFunction == 0] <- NA
+```
+
+
+Step 2: Preprocessing
+
+• Perform additional preprocessing steps on the dataset, such as handling missing values, feature engineering, and feature scaling.
+• Ensure that the dataset is properly cleaned and formatted for analysis.
+
+```{r}
+#Handling missing values.
+#Imputing missing values based on the mean of each pregnancy count group.
+datar <- datar %>% 
+  group_by(Pregnancies) %>%
+  mutate(across(where(is.numeric), ~ifelse(is.na(.), mean(., na.rm = TRUE), .))) %>%
+  ungroup()
+
+#Impute missing values (if there are any left) with the means for the whole data.
+datar <- datar %>%
+  group_by(Pregnancies) %>%
+  mutate(across(where(is.numeric), ~ifelse(is.na(.), mean(., na.rm = TRUE), .))) %>%
+  ungroup()
+
+#Feature Engineering.
+#Adding new features.
+datar <- datar %>%
+  mutate(
+    Insulin_to_Glucose_Ratio = Insulin / Glucose,  # creating Insulin to Glucose Ratio
+    BMI_BloodPressure_Interaction = BMI * BloodPressure  # creating interaction between BMI and Blood Pressure
+  )
+
+#Feature scaling.
+#Normalizing newly created features.
+datar <- datar %>%
+  mutate(
+    BMI_BloodPressure_Interaction = scale(BMI_BloodPressure_Interaction),
+    Insulin_to_Glucose_Ratio = scale(Insulin_to_Glucose_Ratio)
+  )
+
+datar <- round(datar, 3)
+head(datar)
+
+#Keeping the upldated version of dataset, ready for analysis in a csv.
+write.csv(datar, "diabetes_new.csv", na = "")
+```
+
+
+Step 3: Explanatory Data Analysis (EDA)
+  
+• Conduct Exploratory Data Analysis (EDA) on the dataset.
+• Explore the characteristics and relationships within the data using statistical and visual methods.
+• Identify patterns, trends, and potential outliers in the data.
+
+Plot 1: Correlation heatmap
+```{r}
+#Plotting correlation heatmap for the data.
+corrplot(cor(datar[, -1]), method = "shade", tl.col = "black", tl.srt = 45)
+```
+We can see that there are only high correlations between the newly created features that are dependent on already existing ones. Also we have relatively high correlation between BMI and SkinThickness. The other low correlations imply that we can use models which are designed for not correlated features.
+
+
+Plot 2: Effect of Number of Pregnancies on Diabetes Outcome
+```{r}
+#Checking whether bigger number of pregnancies implies higher chance for having diabetes.
+ggplot(datar, aes(x = Pregnancies, y = Outcome)) +
+  geom_jitter(alpha = 0.4, width = 0.1, height = 0.02, color = "blue") +
+  stat_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE, color = "red") +
+  labs(title = "Effect of Number of Pregnancies on Diabetes Outcome",
+       x = "Number of Pregnancies",
+       y = "Probability of Diabetes (Outcome = 1)") +
+  theme_minimal()
+```
+Here we see jittered scatterplot beetween Number of Pregnancies and Outcome of the disease combined with Logistic regression model that counts probability of getting the disease associated with the number of preganicies. We can clearly see that as the number of pregnancies is getting higher, the probability increases as well.
+
+Plot 3: Scatterplot for SkinThickness vs BMI
+```{r}
+#Scatterplot for SkinThickness vs BMI
+ggplot(datar, aes(x = SkinThickness, y = BMI)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  labs(title = "Scatterplot of SkinThickness vs BMI",
+       x = "SkinThickness",
+       y = "BMI") +
+  theme_minimal()
+```
+As we saw in correlation heatmap there was a quite strong correlation between SkinThickness and BMI and this scatterplot shows that it was correct.
+
+Plot 4: Distribution of Glucose Levels
+```{r}
+#Histogram of GLucose
+ggplot(datar, aes(x = Glucose)) +
+    geom_histogram(binwidth = 5, fill = "pink", color = "black") +
+    labs(title = "Distribution of Glucose Levels", x = "Glucose", y = "Count") +
+    theme_minimal()
+```
+From the histogram we can see that the distribution of Glucose levels in our data is very close to Normal Distribution.
+
+Plot 5: Blood Pressure Distribution by Diabetes Outcome
+```{r}
+#Boxplots for Blood Pressure Distribution by Diabetes Outcome
+ggplot(datar, aes(x = as.factor(Outcome), y = BloodPressure)) +
+    geom_boxplot(fill = "darkblue", color = "black") +
+    labs(title = "Blood Pressure Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Blood Pressure") +
+    theme_minimal()
+```
+From the boxplots we can say that for positive outcome the values of BloodPressure are higher, but in both cases we have outliers.
+
+Plot 6: Glucose Level Density by Diabetes Outcome
+```{r}
+#Density plot for Glucose Level Density by Diabetes Outcome
+ggplot(datar, aes(x = DiabetesPedigreeFunction, fill = as.factor(Outcome))) +
+    geom_density(alpha = 0.5) +
+    labs(title = "Glucose Level Density by Diabetes Outcome", x = "Glucose", y = "Density") +
+    scale_fill_manual(values = c("red", "green"), labels = c("No Diabetes", "Diabetes")) +
+    theme_minimal()
+```
+We can see that the densities are similar in their skewness and only for no diabetes the peak is higher.
+
+
+Step 4: Algorithm Application
+
+• Apply all suitable machine learning algorithms studied during the course to the dataset.
+• Experiment with various algorithms to understand their performance on the data.
+• Conduct a comparative analysis of the algorithms, considering metrics such as accuracy, precision, recall, and F1-score.
+
+Let's firstly creat training and testing sets from our data.
+```{python}
+datapy = pd.read_csv("diabetes_new.csv")
+
+X = datapy.drop(['Unnamed: 0', 'Outcome'], axis=1)
+y = datapy['Outcome']
+
+# Splitting the data into train and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Creating a bootstrap sample from the training data
+X_train_boot, y_train_boot = resample(X_train, y_train, replace=True, random_state=42)
+
+# Display sizes of the splits and the bootstrap sample
+print("Training set shape:", X_train.shape)
+print("Testing set shape:", X_test.shape)
+print("Bootstrap sample shape:", X_train_boot.shape)
+```
+
+Model 1: Logistic Regression 
+```{python}
+logistic = LogisticRegression(max_iter=1000, random_state=42)
+logistic.fit(X_train_boot, y_train_boot)
+
+y_pred_log = logistic.predict(X_test)
+
+# Calculating metrics
+accuracy_log = accuracy_score(y_test, y_pred_log)
+precision_log = precision_score(y_test, y_pred_log)
+recall_log = recall_score(y_test, y_pred_log)
+f1_log = f1_score(y_test, y_pred_log)
+
+accuracy_log, precision_log, recall_log, f1_log
+```
+We can see the metrics for the Logistic Regression Model.
+
+Model 2: K-Nearest Neighbors (KNN) 
+```{python}
+# Instantiating the KNN model (using k=5 neighbors as a starting point)
+knn = KNeighborsClassifier(n_neighbors=5)
+knn.fit(X_train_boot, y_train_boot)
+
+y_pred_knn = knn.predict(X_test)
+
+# Calculating metrics
+accuracy_knn = accuracy_score(y_test, y_pred_knn)
+precision_knn = precision_score(y_test, y_pred_knn)
+recall_knn = recall_score(y_test, y_pred_knn)
+f1_knn = f1_score(y_test, y_pred_knn)
+
+accuracy_knn, precision_knn, recall_knn, f1_knn
+```
+We can see the metrics for the KNN Model.
+
+Model 3: Naive Bayes
+```{python}
+# Instantiating the Gaussian Naive Bayes model
+naive_bayes = GaussianNB()
+naive_bayes.fit(X_train, y_train_boot)
+
+y_pred_nb = naive_bayes.predict(X_test)
+
+# Calculating metrics
+accuracy_nb = accuracy_score(y_test, y_pred_nb)
+precision_nb = precision_score(y_test, y_pred_nb)
+recall_nb = recall_score(y_test, y_pred_nb)
+f1_nb = f1_score(y_test, y_pred_nb)
+
+accuracy_nb, precision_nb, recall_nb, f1_nb
+```
+We can see the metrics for the Naive Bayes Model.
+
+Model 4: Decision Trees
+```{python}
+decision_tree = DecisionTreeClassifier(random_state=42)
+decision_tree.fit(X_train_boot, y_train_boot)
+
+y_pred_dt = decision_tree.predict(X_test)
+
+# Calculating metrics
+accuracy_dt = accuracy_score(y_test, y_pred_dt)
+precision_dt = precision_score(y_test, y_pred_dt)
+recall_dt = recall_score(y_test, y_pred_dt)
+f1_dt = f1_score(y_test, y_pred_dt)
+
+accuracy_dt, precision_dt, recall_dt, f1_dt
+```
+We can see the metrics for the Decision Tree Model.
+
+Model 5: Bagging
+```{python}
+bagging = BaggingClassifier(base_estimator=DecisionTreeClassifier(random_state=42), n_estimators=10, random_state=42)
+bagging.fit(X_train_boot, y_train_boot)
+
+y_pred_bagging = bagging.predict(X_test)
+
+# Calculating metrics
+accuracy_bagg = accuracy_score(y_test, y_pred_bagging)
+precision_bagg = precision_score(y_test, y_pred_bagging)
+recall_bagg = recall_score(y_test, y_pred_bagging)
+f1_bagg = f1_score(y_test, y_pred_bagging)
+
+accuracy_bagg, precision_bagg, recall_bagg, f1_bagg
+```
+We can see the metrics for the Bagging Model.
+
+Model 6: Random Forest
+```{python}
+random_forest = RandomForestClassifier(n_estimators=10, random_state=42)
+random_forest.fit(X_train_boot, y_train_boot)
+
+y_pred_rf = random_forest.predict(X_test)
+
+# Calculating metrics
+accuracy_rf = accuracy_score(y_test, y_pred_rf)
+precision_rf = precision_score(y_test, y_pred_rf)
+recall_rf = recall_score(y_test, y_pred_rf)
+f1_rf = f1_score(y_test, y_pred_rf)
+
+accuracy_rf, precision_rf, recall_rf, f1_rf
+```
+We can see the metrics for the Random Forest Model.
+
+
+Step 5: Model Selection
+
+• Choose the best-performing model based on the comparative analysis.
+• Consider the overall performance of each algorithm and its suitability for the dataset.
+• Justify your choice of the best model based on empirical evidence from the analysis.
+
+Here's a summary of the performance metrics for each model:
+
+  Logistic Regression
+    Accuracy: 72.73%
+    Precision: 61.82%
+    Recall: 61.82%
+    F1-Score: 61.82%
+
+  K-Nearest Neighbors (KNN)
+    Accuracy: 69.48%
+    Precision: 56.67%
+    Recall: 61.82%
+    F1-Score: 59.13%
+
+  Naive Bayes
+    Accuracy: 70.78%
+    Precision: 58.06%
+    Recall: 65.45%
+    F1-Score: 61.54%
+
+  Decision Tree
+    Accuracy: 71.43%
+    Precision: 59.65%
+    Recall: 61.82%
+    F1-Score: 60.71%
+
+  Bagging
+    Accuracy: 74.68%
+    Precision: 65.38%
+    Recall: 61.82%
+    F1-Score: 63.55%
+
+  Random Forest
+    Accuracy: 72.08%
+    Precision: 61.11%
+    Recall: 60.00%
+    F1-Score: 60.55%
+
+Conclusion: The Bagging model exhibits the highest overall performance among all the models. Its accuracy and precision are the highest. These metrics are very important as they indicate the model's ability to correctly identify cases of diabetes, minimizing both false positives and false negatives.
+Though its recall is close to other models' recalls but combined with precision it leads to the highest F1-Score. This indicates a robust performance in both detecting positive cases and in avoiding false alarms.
+The Bagging model benefits from the ensemble approach which typically improves prediction stability and reduces overfitting compared to a single Decision Tree.
+Here Begging Model effectively balances the dataset's variability and improves prediction reliability, making it particularly suitable for a medical dataset where both false positives and false negatives carry significant consequences.
+
+
+Step 6: Hyperparameter Tuning
+
+• If necessary, perform Grid Search cross-validation for hyperparameter
+tuning on the selected model.
+• Tune the hyperparameters to optimize the performance of the model.
+• Evaluate the tuned model’s performance and compare it to the untuned model.
+
+```{python}
+param_grid = {
+    'n_estimators': [10, 50, 100],
+    'max_samples': [0.5, 0.7, 1.0],
+    'base_estimator__max_depth': [None, 10, 20]
+}
+
+grid_search = GridSearchCV(BaggingClassifier(base_estimator=DecisionTreeClassifier(random_state=42), random_state=42),
+                           param_grid=param_grid, scoring='accuracy',cv=3, verbose=1)
+
+grid_search.fit(X_train, y_train)
+best_params = grid_search.best_params_
+best_score = grid_search.best_score_
+best_model = grid_search.best_estimator_
+y_pred_best = best_model.predict(X_test)
+
+accuracy_best = accuracy_score(y_test, y_pred_best)
+precision_best = precision_score(y_test, y_pred_best)
+recall_best = recall_score(y_test, y_pred_best)
+f1_best = f1_score(y_test, y_pred_best)
+
+best_params, best_score, accuracy_best, precision_best, recall_best, f1_best
+```
+The results are:
+  Best Parameters:
+    Maximum Depth of Base Estimators: 10
+    Maximum Samples per Base Estimator: 70% of the training set
+    Number of Estimators: 50
+
+  Best Cross-Validation Score (Accuracy): 78.17%
+  
+  Performance of the Tuned Model on the Testing Set:
+    Accuracy: 72.08%
+    Precision: 60.00%
+    Recall: 65.45%
+    F1-Score: 62.61%
+
+  Bagging
+    Accuracy: 74.68%
+    Precision: 65.38%
+    Recall: 61.82%
+    F1-Score: 63.55%
+    
+We can see that we have an increased recall but a little decreased precision, which causes slight decrease in F1-Score as well. 
+This suggests that while the tuned parameters optimize the model for general accuracy, they trade off slightly in precision for better recall on the testing data, which could be more valuable depending on the clinical importance of correctly identifying as many positive cases as possible, even at the risk of some false positives.
+
+
+THE END!
